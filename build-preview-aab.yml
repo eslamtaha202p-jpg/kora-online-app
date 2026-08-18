@@ -1,0 +1,107 @@
+name: Build Kora Online Android
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Flutter packages
+        run: flutter pub get
+
+      - name: Generate Android project
+        shell: bash
+        run: |
+          set -e
+          rm -rf .android_template android
+
+          flutter create \
+            --platforms=android \
+            --org=com.koraonline \
+            --project-name=matches \
+            .android_template
+
+          cp -R .android_template/android ./android
+          rm -rf .android_template
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          app_id = "com.koraonline.matches"
+          app_label = "كورة اونلاين - مباريات اليوم"
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          text = manifest.read_text(encoding="utf-8")
+
+          text = re.sub(
+              r'android:label="[^"]*"',
+              f'android:label="{app_label}"',
+              text,
+              count=1,
+          )
+
+          permission = '<uses-permission android:name="android.permission.INTERNET" />'
+          if 'android.permission.INTERNET' not in text:
+              text = text.replace('<application', f'{permission}\n    <application', 1)
+
+          manifest.write_text(text, encoding="utf-8")
+
+          for filename in (
+              "android/app/build.gradle.kts",
+              "android/app/build.gradle",
+          ):
+              path = Path(filename)
+              if not path.exists():
+                  continue
+              gradle = path.read_text(encoding="utf-8")
+              gradle = re.sub(
+                  r'(applicationId\s*=\s*["\'])([^"\']+)(["\'])',
+                  rf'\g<1>{app_id}\g<3>',
+                  gradle,
+              )
+              gradle = re.sub(
+                  r'(namespace\s*=\s*["\'])([^"\']+)(["\'])',
+                  rf'\g<1>{app_id}\g<3>',
+                  gradle,
+              )
+              path.write_text(gradle, encoding="utf-8")
+
+          print("Android project configured:", app_id)
+          print("App label:", app_label)
+          PY
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Build release AAB
+        run: flutter build appbundle --release
+
+      - name: Upload Android files
+        uses: actions/upload-artifact@v4
+        with:
+          name: kora-online-android-build
+          if-no-files-found: error
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/bundle/release/app-release.aab
