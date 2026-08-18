@@ -1,0 +1,103 @@
+name: Build Kora Online App
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract project ZIP
+        run: |
+          rm -rf app
+          mkdir app
+          unzip -q kora_online_matches_github_ready_v0.3.0.zip -d app
+
+          if [ ! -f app/pubspec.yaml ]; then
+            echo "pubspec.yaml not found inside ZIP"
+            exit 1
+          fi
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Flutter
+        run: |
+          git clone https://github.com/flutter/flutter.git \
+            --depth 1 \
+            --branch stable \
+            $HOME/flutter
+
+          echo "$HOME/flutter/bin" >> $GITHUB_PATH
+
+      - name: Flutter version
+        run: flutter --version
+
+      - name: Install packages
+        working-directory: app
+        run: flutter pub get
+
+      - name: Generate Android files
+        working-directory: app
+        run: |
+          rm -rf android
+          rm -rf .android_template
+
+          flutter create \
+            --platforms=android \
+            --org=com.koraonline \
+            --project-name=matches \
+            .android_template
+
+          cp -R .android_template/android ./android
+          rm -rf .android_template
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          text = manifest.read_text(encoding="utf-8")
+
+          text = re.sub(
+              r'android:label="[^"]*"',
+              'android:label="كورة اونلاين - مباريات اليوم"',
+              text,
+              count=1
+          )
+
+          if "android.permission.INTERNET" not in text:
+              text = text.replace(
+                  "<application",
+                  '<uses-permission android:name="android.permission.INTERNET" />\n    <application',
+                  1
+              )
+
+          manifest.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Build APK
+        working-directory: app
+        run: flutter build apk --release
+
+      - name: Build AAB
+        working-directory: app
+        run: flutter build appbundle --release
+
+      - name: Upload APK and AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: kora-online-build
+          path: |
+            app/build/app/outputs/flutter-apk/app-release.apk
+            app/build/app/outputs/bundle/release/app-release.aab
