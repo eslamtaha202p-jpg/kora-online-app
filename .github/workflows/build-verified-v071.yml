@@ -1,0 +1,74 @@
+name: BUILD VERIFIED v0.7.1
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify exact source package exists
+        run: |
+          test -f kora-online-source-v0.7.1.zip
+          rm -rf app
+          mkdir app
+          unzip -q kora-online-source-v0.7.1.zip -d app
+          grep -q '^version: 0.7.1+8$' app/pubspec.yaml
+          grep -q "versionName = '0.7.1'" app/lib/core/app_identity.dart
+          grep -q 'KORA_VERIFIED_BUILD_071' app/lib/core/build_marker.dart
+          echo "VERIFIED SOURCE v0.7.1"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install packages
+        working-directory: app
+        run: flutter pub get
+
+      - name: Generate Android platform
+        working-directory: app
+        run: |
+          rm -rf .android_template android
+          flutter create --platforms=android --org=com.koraonline --project-name=matches .android_template
+          cp -R .android_template/android ./android
+          rm -rf .android_template
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          manifest = Path('android/app/src/main/AndroidManifest.xml')
+          text = manifest.read_text(encoding='utf-8')
+          text = re.sub(r'android:label="[^"]*"', 'android:label="كورة اونلاين - مباريات اليوم"', text, count=1)
+          if 'android.permission.INTERNET' not in text:
+              text = text.replace('<application', '<uses-permission android:name="android.permission.INTERNET" />\n    <application', 1)
+          manifest.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Build APK
+        working-directory: app
+        run: flutter build apk --release
+
+      - name: Build AAB
+        working-directory: app
+        run: flutter build appbundle --release
+
+      - name: Upload verified build
+        uses: actions/upload-artifact@v4
+        with:
+          name: KORA-ONLINE-v0.7.1-VERIFIED
+          path: |
+            app/build/app/outputs/flutter-apk/app-release.apk
+            app/build/app/outputs/bundle/release/app-release.aab
